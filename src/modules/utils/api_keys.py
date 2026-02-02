@@ -1,13 +1,15 @@
 """ A simple API keys management class using python-dotenv."""
 # import os
 import dotenv
-import logging
+# import logging
+from modules.utils.log_utils import get_logger # , log_tree
+
 # from pathlib import Path
 
 # -----------------------------
 # Logging setup
 # -----------------------------
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class api_vault(object):
