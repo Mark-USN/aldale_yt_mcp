@@ -22,17 +22,18 @@ Notes for AI agents:
 from __future__ import annotations
 
 import json
-import logging
+# import logging
 import os
-import re
+# import re
 import secrets
 import threading
 import time
 from contextlib import contextmanager
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence, TypedDict, TypeVar
-from urllib.parse import parse_qs, urlparse
+from typing import TypedDict, TypeVar
+# from urllib.parse import parse_qs, urlparse
+from modules.utils.log_utils import get_logger
 
 from youtube_transcript_api import (
     FetchedTranscript,
@@ -43,8 +44,10 @@ from youtube_transcript_api import (
     YouTubeTranscriptApi,
 )
 from fastmcp import FastMCP  # pylint: disable=unused-import
+from modules.utils.paths import resolve_cache_paths
+from modules.utils.youtube_ids import extract_video_id
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 T = TypeVar("T", bound="FastMCP")
 
@@ -72,9 +75,6 @@ PREFERRED_LANGS: tuple[str, ...] = (
     "es-419",
     "es-ES",
 )
-
-_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
-
 
 @contextmanager
 def _file_lock(lock_path: Path):
@@ -143,83 +143,12 @@ def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> Non
         except OSError:
             pass
 
-
-def get_video_id(url_or_id: str) -> str:
-    """Extract a YouTube video id from a URL *or* accept a bare id.
-
-    Args:
-        url_or_id: Full YouTube URL (watch/shorts/youtu.be) or the bare video id.
-
-    Returns:
-        The YouTube video id.
-
-    Raises:
-        ValueError: If the input is empty or does not contain a valid video id.
-    """
-
-    candidate = (url_or_id or "").strip()
-    if not candidate:
-        raise ValueError("Empty URL/video id")
-
-    # Allow callers/agents to pass just a video id.
-    if "://" not in candidate and _VIDEO_ID_RE.fullmatch(candidate):
-        return candidate
-
-    parsed = urlparse(candidate)
-
-    # https://youtu.be/<id>
-    if parsed.netloc.endswith("youtu.be"):
-        vid = parsed.path.lstrip("/").split("/", 1)[0]
-        if _VIDEO_ID_RE.fullmatch(vid or ""):
-            return vid
-
-    # https://www.youtube.com/watch?v=<id>
-    qs = parse_qs(parsed.query)
-    if "v" in qs and qs["v"]:
-        vid = qs["v"][0]
-        if _VIDEO_ID_RE.fullmatch(vid or ""):
-            return vid
-
-    # https://www.youtube.com/shorts/<id>
-    if parsed.path.startswith("/shorts/"):
-        vid = parsed.path.removeprefix("/shorts/")
-        if "/" not in vid and _VIDEO_ID_RE.fullmatch(vid):
-            return vid
-    
-    raise ValueError(f"Invalid YouTube URL/video id: {url_or_id!r}")
-
-
-def _get_cache_dir() -> Path:
-    """Base folder for project cache.
-
-    Resolution order:
-    1) MCP_CACHE_DIR environment variable
-    2) <repo_root>/cache (best-effort heuristic: 3 parents up from this file)
-    3) ./cache (fallback)
-    """
-
-    if override := os.environ.get("MCP_CACHE_DIR"):
-        return Path(override).expanduser().resolve()
-
-    here = Path(__file__).resolve()
-    try:
-        return here.parents[3] / "cache"
-    except IndexError:
-        return Path.cwd() / "cache"
-
-
-def _get_transcripts_dir() -> Path:
-    """Folder for transcript cache."""
-
-    out_dir = _get_cache_dir() / "transcripts"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    return out_dir
-
-
 def _get_transcript_cache_path(video_id: str) -> Path:
     """Return the path to the cached transcript JSON for this video."""
 
-    return _get_transcripts_dir() / f"{video_id}.json"
+    return resolve_cache_paths(
+        app_name = "transcripts",
+        start = Path(__file__)).app_cache_dir / f"{video_id}.json"
 
 
 def _as_raw_snippets(transcript: FetchedTranscript | list[TranscriptSnippet]) -> list[TranscriptSnippet]:
@@ -281,7 +210,7 @@ def fetch_transcript(
     """
 
     langs = list(prefer_langs) if prefer_langs is not None else list(PREFERRED_LANGS)
-    video_id = get_video_id(url_or_id)
+    video_id = extract_video_id(url_or_id)
     cache_path = _get_transcript_cache_path(video_id)
     lock_path = cache_path.with_suffix(cache_path.suffix + ".lock")
 
@@ -402,7 +331,7 @@ def json_to_paragraphs(
 
     return "\n\n".join(" ".join(p) for p in paragraphs)
 
-def youtube_snippets(
+def youtube_json(
     url_or_id: str,
     prefer_langs: Sequence[str] | None = None,
 ) -> list[TranscriptSnippet] | None:
@@ -421,26 +350,6 @@ def youtube_snippets(
 
     """
     return fetch_transcript(url_or_id, prefer_langs)
-
-
-
-
-def youtube_json(url_or_id: str, prefer_langs: Sequence[str] | None = None) -> str | None:
-    """Return the transcript formatted as JSON, or None.
-
-    Args:
-        url_or_id: YouTube URL or video id.
-        prefer_langs: Preferred language codes (descending priority).
-
-    Returns:
-        A JSON string (pretty-printed) or None.
-    """
-
-    transcript_list = fetch_transcript(url_or_id, prefer_langs)
-    if transcript_list is None:
-        return None
-    return json.dumps(transcript_list, ensure_ascii=False, indent=2)
-
 
 def youtube_text(url_or_id: str, prefer_langs: Sequence[str] | None = None) -> str | None:
     """Return the transcript as a single space-joined string, or None."""
@@ -468,7 +377,6 @@ def register(mcp: T) -> None:
     """Register YouTube transcript tools with the MCP instance."""
 
     logger.debug("✅ Registering YouTube transcript tools")
-    mcp.tool(tags=["public", "api"])(youtube_snippets)
     mcp.tool(tags=["public", "api"])(youtube_json)
     mcp.tool(tags=["public", "api"])(youtube_text)
     mcp.tool(tags=["public", "api"])(youtube_paragraph)
@@ -485,15 +393,6 @@ def test() -> None:
         yt_url = input("Enter YouTube URL: ").strip()
         if not yt_url:
             logger.warning("⚠️ Please paste a valid YouTube URL.")
-
-    start = time.perf_counter()
-    trans = youtube_snippets(yt_url)
-    elapsed = time.perf_counter() - start
-    # `youtube_snippets()` already returns a JSON string.
-    print("\n\n--- SNIPPETS TRANSCRIPT ---\n")
-    print(trans)
-    print(f"\n✅ Transcribed in {timedelta(seconds=elapsed)}.\n")
-
 
     start = time.perf_counter()
     trans = youtube_json(yt_url)

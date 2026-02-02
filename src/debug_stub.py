@@ -2,15 +2,15 @@
 
 # import signal
 import asyncio
-import logging
+# import logging
 import argparse
 import sys
-from modules.utils.logging_config import setup_logging
+from modules.utils.log_utils import configure_logging, get_logger # , log_tree
 
 # -----------------------------
 # Logging setup
 # -----------------------------
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def debug_stub():
@@ -20,7 +20,7 @@ def debug_stub():
     )
 
     parser.add_argument("--test",
-        choices=["mcp_yt-server", "universal-client", "yt-search"],
+        choices=["demo-server", "long-job-server", "universal-client", "yt-search", "yt-audio"],
         type=str.lower,
         required=True,
         help="Run as server, long_job_server, client, or stop-server."
@@ -34,23 +34,30 @@ def debug_stub():
         sys.exit(1)  # Exit with an error code
 
     match args.test:
-        case "mcp-yt-server":
-            import modules.mcp_servers.mcp_yt_server as demo
+        case "demo-server":
+            import modules.mcp_servers.demo_server as demo
             demo.main()
+        case "long-job-server":
+            import modules.mcp_servers.long_job_server as ljs
+            ljs.launch_server()
         case "universal-client":
             from modules.mcp_clients.universal_client import UniversalClient
             # import modules.mcp_clients.universal_client as uc
             asyncio.run(UniversalClient("127.0.0.1", 8085).run())
-        case "yt-search":
+        case "yt_search":
             import modules.tools.youtube_search as yt_search
             # from modules.utils.api_keys import api_vault
             # api_keys = api_vault()
             # google_key = api_keys.get_value("GOOGLE_KEY")
             yt_search.test()
+        case "yt-audio":
+            import modules.tools.youtube_audio_transcript as yt_audio
+            yt_audio.test()
 
 if __name__ == "__main__":
     # -----------------------------
     # Logging setup
     # -----------------------------
-    setup_logging()
+    configure_logging()
+
     debug_stub()
